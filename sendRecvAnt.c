@@ -12,21 +12,24 @@
 #define RTP_CAPS_OPUS " application/x-rtp,media=audio,encoding-name=OPUS,payload=97 "
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <glib.h>
 #include <gst/gst.h>
 #include <gst/webrtc/webrtc.h>
 #include <json-glib/json-glib.h>
-#include "librws.h"
+#include <libsoup/soup.h>
 
 gboolean is_joined = FALSE;
 GstElement *gst_pipe;
 static gchar *ws_server_addr = "";
 static gint ws_server_port = 5080;
-static rws_socket _socket = NULL;
+static gboolean force_wss = FALSE;
+static SoupSession *ws_session = NULL;
+static SoupWebsocketConnection *ws_conn = NULL;
 gchar *mode = "publish";
 gchar **play_streamids = NULL;
 gchar *filename = "";
-gchar *appname = "WebRTCAppEE";
+gchar *appname = "Trial";
 gchar *stream_token = NULL;
 
 static GOptionEntry entries[] =
@@ -35,8 +38,9 @@ static GOptionEntry entries[] =
         {"port", 'p', 0, G_OPTION_ARG_INT, &ws_server_port, "Antmedia server Port default : 5080", NULL},
         {"filename",'f', 0, G_OPTION_ARG_STRING, &filename, "specify file path which you want to stream", NULL},
         {"mode", 'm', 0, G_OPTION_ARG_STRING, &mode, "publish or  play or p2p default :publish", NULL},
-        {"appname", 'a', 0, G_OPTION_ARG_STRING, &appname, "Appname for publishing the Stream :WebRTCAppEE", NULL},
-        {"token", 't', 0, G_OPTION_ARG_STRING, &stream_token, "Antmedia server token for publishing the Stream :WebRTCAppEE", NULL},
+        {"appname", 'a', 0, G_OPTION_ARG_STRING, &appname, "Appname for publishing the Stream :Trial", NULL},
+        {"token", 't', 0, G_OPTION_ARG_STRING, &stream_token, "Antmedia server token for publishing the Stream :Trial", NULL},
+        {"wss", 0, 0, G_OPTION_ARG_NONE, &force_wss, "force WSS (secure) connection", NULL},
         //{"video codec", 'c', 0, G_OPTION_ARG_STRING, &vencoding, "video codecs h264 or vp8", NULL},
         {"streamids", 'i', 0, G_OPTION_ARG_STRING_ARRAY, &play_streamids, "you can pass n number of streamid to play like this -i streamid -i streamid ....", NULL},
         {NULL}};
@@ -81,7 +85,7 @@ static void on_answer_created(GstPromise *promise, gpointer webrtcbin_id)
     json_object_set_string_member(sdp_answer_json, "streamId", (gchar *)webrtcbin_id);
     json_object_set_string_member(sdp_answer_json, "command", "takeConfiguration");
     sdp_text = get_string_from_json_object(sdp_answer_json);
-    rws_socket_send_text(_socket, sdp_text);
+    soup_websocket_connection_send_text(ws_conn, sdp_text);
     gst_webrtc_session_description_free(answer);
 }
 
@@ -98,7 +102,7 @@ static void send_ice_candidate_message(GstElement *webrtcbin, guint mline_index,
     json_object_set_int_member(ice_json, "label", 0);
     json_string = get_string_from_json_object(ice_json);
     json_object_unref(ice_json);
-    rws_socket_send_text(_socket, json_string);
+    soup_websocket_connection_send_text(ws_conn, json_string);
     g_free(json_string);
 }
 static void
@@ -112,34 +116,88 @@ handle_media_stream(GstPad *pad, GstElement *gst_pipe, gchar *convert_name,
     g_print("Trying to handle stream with %s ! %s ", convert_name, sink_name);
     q = gst_element_factory_make("queue", NULL);
     sink = gst_element_factory_make(sink_name, NULL);
-    g_object_set(G_OBJECT(sink), "sync", FALSE,NULL);
     conv = gst_element_factory_make(convert_name, NULL);
+
+    // Check if elements were created successfully
+    if (!q || !sink || !conv) {
+        g_printerr("Failed to create media stream elements");
+        return;
+    }
+
+    g_object_set(G_OBJECT(sink), "sync", FALSE, NULL);
 
     if (g_strcmp0(convert_name, "audioconvert") == 0)
     {
         g_print("audio stream");
         resample = gst_element_factory_make("audioresample", NULL);
+        if (!resample) {
+            g_printerr("Failed to create audioresample");
+            return;
+        }
         gst_bin_add_many(GST_BIN(gst_pipe), q, conv, resample, sink, NULL);
-        gst_element_sync_state_with_parent(q);
-        gst_element_sync_state_with_parent(sink);
-        gst_element_sync_state_with_parent(resample);
-        gst_element_sync_state_with_parent(conv);
-        gst_element_link_many(q, conv, resample, sink, NULL);
+        
+        // Sync states with error checking
+        if (gst_element_sync_state_with_parent(q) != GST_STATE_CHANGE_SUCCESS) {
+            g_printerr("Failed to sync queue state");
+        }
+        if (gst_element_sync_state_with_parent(sink) != GST_STATE_CHANGE_SUCCESS) {
+            g_printerr("Failed to sync sink state");
+        }
+        if (gst_element_sync_state_with_parent(resample) != GST_STATE_CHANGE_SUCCESS) {
+            g_printerr("Failed to sync resample state");
+        }
+        if (gst_element_sync_state_with_parent(conv) != GST_STATE_CHANGE_SUCCESS) {
+            g_printerr("Failed to sync conv state");
+        }
+        
+        if (gst_element_link_many(q, conv, resample, sink, NULL) != TRUE) {
+            g_printerr("Failed to link audio elements");
+            return;
+        }
     }
     else
     {
         g_print("video stream");
         toverlay = gst_element_factory_make("timeoverlay", NULL);
+        if (!toverlay) {
+            g_printerr("Failed to create timeoverlay");
+            return;
+        }
         gst_bin_add_many(GST_BIN(gst_pipe), q, conv, toverlay, sink, NULL);
-        gst_element_sync_state_with_parent(q);
-        gst_element_sync_state_with_parent(conv);
-        gst_element_sync_state_with_parent(sink);
-        gst_element_sync_state_with_parent(toverlay);
-        gst_element_link_many(q, conv, toverlay, sink, NULL);
+        
+        // Sync states with error checking
+        if (gst_element_sync_state_with_parent(q) != GST_STATE_CHANGE_SUCCESS) {
+            g_printerr("Failed to sync queue state");
+        }
+        if (gst_element_sync_state_with_parent(conv) != GST_STATE_CHANGE_SUCCESS) {
+            g_printerr("Failed to sync conv state");
+        }
+        if (gst_element_sync_state_with_parent(sink) != GST_STATE_CHANGE_SUCCESS) {
+            g_printerr("Failed to sync sink state");
+        }
+        if (gst_element_sync_state_with_parent(toverlay) != GST_STATE_CHANGE_SUCCESS) {
+            g_printerr("Failed to sync toverlay state");
+        }
+        
+        if (gst_element_link_many(q, conv, toverlay, sink, NULL) != TRUE) {
+            g_printerr("Failed to link video elements");
+            return;
+        }
     }
+    
     qpad = gst_element_get_static_pad(q, "sink");
+    if (!qpad) {
+        g_printerr("Failed to get queue sink pad");
+        return;
+    }
+    
     ret = gst_pad_link(pad, qpad);
-    g_assert_cmphex(ret, ==, GST_PAD_LINK_OK);
+    if (ret != GST_PAD_LINK_OK) {
+        g_printerr("Failed to link pad to queue: %s", gst_pad_link_get_name(ret));
+        return;
+    }
+    
+    g_print("Successfully linked %s stream", convert_name);
 }
 void on_incoming_stream(GstElement *webrtc, GstPad *pad)
 {
@@ -155,9 +213,9 @@ void on_incoming_stream(GstElement *webrtc, GstPad *pad)
 
     if (g_str_has_prefix(mediatype, "video"))
     {
-        decode = gst_element_factory_make("avdec_h264", NULL);
-        depay = gst_element_factory_make("rtph264depay", NULL);
-        parse = gst_element_factory_make("h264parse", NULL);
+        decode = gst_element_factory_make("vp8dec", NULL);
+        depay = gst_element_factory_make("rtpvp8depay", NULL);
+        parse = NULL; // VP8 doesn't need a parse element
         convert_name = "videoconvert";
         sink_name = VIDEO_SINK;
     }
@@ -172,18 +230,63 @@ void on_incoming_stream(GstElement *webrtc, GstPad *pad)
     else
     {
         g_printerr("Unknown pad %s, ignoring", GST_PAD_NAME(pad));
+        return;
+    }
+
+    // Check if elements were created successfully
+    if (!decode || !depay) {
+        g_printerr("Failed to create decoder elements for %s stream", mediatype);
+        return;
     }
 
     rtpjitterbuffer = gst_element_factory_make("rtpjitterbuffer", NULL);
-    gst_bin_add_many(GST_BIN(gst_pipe), rtpjitterbuffer, depay, parse, decode, NULL);
+    if (!rtpjitterbuffer) {
+        g_printerr("Failed to create rtpjitterbuffer");
+        return;
+    }
+
+    if (parse) {
+        gst_bin_add_many(GST_BIN(gst_pipe), rtpjitterbuffer, depay, parse, decode, NULL);
+    } else {
+        gst_bin_add_many(GST_BIN(gst_pipe), rtpjitterbuffer, depay, decode, NULL);
+    }
     sinkpad = gst_element_get_static_pad(rtpjitterbuffer, "sink");
-    g_assert(gst_pad_link(pad, sinkpad) == GST_PAD_LINK_OK);
-    gst_element_link_many(rtpjitterbuffer, depay, parse, decode, NULL);
+    if (gst_pad_link(pad, sinkpad) != GST_PAD_LINK_OK) {
+        g_printerr("Failed to link pad to rtpjitterbuffer");
+        return;
+    }
+    
+    if (parse) {
+        if (gst_element_link_many(rtpjitterbuffer, depay, parse, decode, NULL) != TRUE) {
+            g_printerr("Failed to link elements");
+            return;
+        }
+    } else {
+        if (gst_element_link_many(rtpjitterbuffer, depay, decode, NULL) != TRUE) {
+            g_printerr("Failed to link elements");
+            return;
+        }
+    }
+    
     decoded_pad = gst_element_get_static_pad(decode, "src");
-    gst_element_sync_state_with_parent(depay);
-    gst_element_sync_state_with_parent(parse);
-    gst_element_sync_state_with_parent(decode);
-    gst_element_sync_state_with_parent(rtpjitterbuffer);
+    if (!decoded_pad) {
+        g_printerr("Failed to get decoded pad");
+        return;
+    }
+
+    // Sync states with error checking
+    if (gst_element_sync_state_with_parent(depay) != GST_STATE_CHANGE_SUCCESS) {
+        g_printerr("Failed to sync depay state");
+    }
+    if (parse && gst_element_sync_state_with_parent(parse) != GST_STATE_CHANGE_SUCCESS) {
+        g_printerr("Failed to sync parse state");
+    }
+    if (gst_element_sync_state_with_parent(decode) != GST_STATE_CHANGE_SUCCESS) {
+        g_printerr("Failed to sync decode state");
+    }
+    if (gst_element_sync_state_with_parent(rtpjitterbuffer) != GST_STATE_CHANGE_SUCCESS) {
+        g_printerr("Failed to sync rtpjitterbuffer state");
+    }
 
     handle_media_stream(decoded_pad, gst_pipe, convert_name, sink_name);
 }
@@ -216,7 +319,7 @@ static void on_offer_created(GstPromise *promise, const gchar *stream_id)
     json_string = get_string_from_json_object(play_stream);
     g_print("sending offer to %s", stream_id);
     printf("\n%s\n", json_string);
-    rws_socket_send_text(_socket, json_string);
+    soup_websocket_connection_send_text(ws_conn, json_string);
     gst_webrtc_session_description_free(offer);
 }
 static void
@@ -299,7 +402,7 @@ static void create_webrtc(gchar *webrtcbin_id, GstWebRTCSessionDescription *offe
     ret = gst_element_sync_state_with_parent(webrtc);
     g_assert_true(ret);
 }
-void on_socket_received_text(rws_socket socket, const char *text, const unsigned int length)
+void on_socket_received_text(SoupWebsocketConnection *conn, const char *text, const unsigned int length)
 {
     JsonParser *json_parser;
     JsonObject *object;
@@ -394,26 +497,19 @@ void on_socket_received_text(rws_socket socket, const char *text, const unsigned
         json_object_set_boolean_member(publish_stream, "multiPeer", FALSE);
         json_object_set_string_member(publish_stream, "mode", "both");
          gchar *json_string = get_string_from_json_object(publish_stream);
-        rws_socket_send_text(socket, json_string);
+        soup_websocket_connection_send_text(ws_conn, json_string);
 
         }
 
     }
 }
 
-static void on_socket_disconnected(rws_socket socket)
+static void on_socket_disconnected(SoupWebsocketConnection *conn, gpointer user_data)
 {
-    rws_error error = rws_socket_get_error(socket);
-    if (error)
-    {
-        printf("\nSocket disconnect with code, error: %i, %s",
-               rws_error_get_code(error),
-               rws_error_get_description(error));
-    }
     g_print("WebSocket connection closed\n");
 }
 
-static void on_socket_connected(rws_socket socket)
+static void on_socket_connected(SoupWebsocketConnection *conn)
 {
     printf("websocket connected");
     gchar *json_string;
@@ -443,7 +539,7 @@ static void on_socket_connected(rws_socket socket)
         json_object_set_boolean_member(publish_stream, "multiPeer", FALSE);
         json_object_set_string_member(publish_stream, "mode", "both");
         json_string = get_string_from_json_object(publish_stream);
-        rws_socket_send_text(socket, json_string);
+        soup_websocket_connection_send_text(ws_conn, json_string);
     }
     else if (g_strcmp0(mode, "play") == 0)
     {
@@ -459,7 +555,7 @@ static void on_socket_connected(rws_socket socket)
             json_object_set_string_member(play_stream, "room", "");
             json_object_set_array_member(play_stream, "trackList", array);
             json_string = get_string_from_json_object(play_stream);
-            rws_socket_send_text(socket, json_string);
+            soup_websocket_connection_send_text(ws_conn, json_string);
         }
     }
     else
@@ -477,28 +573,53 @@ static void on_socket_connected(rws_socket socket)
         json_object_set_boolean_member(publish_stream, "video", TRUE);
         json_object_set_boolean_member(publish_stream, "audio", TRUE);
         json_string = get_string_from_json_object(publish_stream);
-        rws_socket_send_text(socket, json_string);
+        soup_websocket_connection_send_text(ws_conn, json_string);
     }
 
 }
 
+static void on_ws_message(SoupWebsocketConnection *conn,
+                          SoupWebsocketDataType type,
+                          GBytes *message,
+                          gpointer user_data) {
+    if (type != SOUP_WEBSOCKET_DATA_TEXT) return;
+    gsize len = 0;
+    const char *data = g_bytes_get_data(message, &len);
+    on_socket_received_text(conn, data, (unsigned int)len);
+}
+
+static void on_ws_connect_ready(GObject *source, GAsyncResult *res, gpointer user_data) {
+    GError *err = NULL;
+    ws_conn = soup_session_websocket_connect_finish(SOUP_SESSION(source), res, &err);
+    if (!ws_conn) {
+        g_printerr("WebSocket connect failed: %s\n", err ? err->message : "unknown");
+        g_clear_error(&err);
+        return;
+    }
+    g_signal_connect(ws_conn, "message", G_CALLBACK(on_ws_message), NULL);
+    g_signal_connect(ws_conn, "closed", G_CALLBACK(on_socket_disconnected), NULL);
+
+    /* Call the setup that was in on_socket_connected() */
+    on_socket_connected(ws_conn);
+}
+
 static void websocket_connect()
 {
-    _socket = rws_socket_create(); // create and store socket handle
-    g_assert(_socket);
-    rws_socket_set_scheme(_socket, "ws");
-    rws_socket_set_host(_socket, ws_server_addr);
-    appname =  g_strdup_printf("/%s/websocket",appname);
-    rws_socket_set_path(_socket, appname);
-    rws_socket_set_port(_socket, ws_server_port);
-    rws_socket_set_on_disconnected(_socket, &on_socket_disconnected);
-    rws_socket_set_on_received_text(_socket, &on_socket_received_text);
-    rws_socket_set_on_connected(_socket, &on_socket_connected);
+    if (ws_session == NULL) ws_session = soup_session_new();
 
-#if !defined(RWS_APPVEYOR_CI)
-    // connection denied for client applications
-    rws_socket_connect(_socket);
-#endif
+    const char *scheme = (force_wss || ws_server_port == 5443) ? "wss" : "ws";
+    gchar *path = g_strdup_printf("/%s/websocket", appname);
+    gchar *uri_string = g_strdup_printf("%s://%s:%d%s", scheme, ws_server_addr, ws_server_port, path);
+    g_free(path);
+
+    SoupMessage *msg = soup_message_new("GET", uri_string);
+    g_free(uri_string);
+
+    soup_session_websocket_connect_async(
+        ws_session, msg, NULL, NULL, 0, /* no origin, no protocols, default io_priority */
+        NULL, /* cancellable */
+        on_ws_connect_ready, NULL);
+    g_object_unref(msg);
 }
 
 gint main(gint argc, gchar **argv)
