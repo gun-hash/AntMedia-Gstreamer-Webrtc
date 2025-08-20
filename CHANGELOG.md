@@ -10,12 +10,19 @@ All notable changes to this project will be documented in this file.
 - **Auto-detection**: Port 5443 automatically uses WSS protocol
 - **Better Error Handling**: Improved connection error messages and debugging
 - **Modern Dependencies**: Migrated to libsoup-3.0 for WebSocket handling
+- **VP8 Encoding Support**: Added VP8 encoding for publishing streams (vp8enc + rtpvp8pay)
+- **Bidirectional Streaming**: Full support for both publish and play modes with VP8
 
 ### Changed
 - **WebSocket Library**: Migrated from `librws` to `libsoup-3.0`
 - **Default App**: Changed default application from "WebRTCAppEE" to "Trial"
 - **Build System**: Updated CMakeLists.txt to use libsoup-3.0 instead of librws
 - **Dependencies**: Added libsoup-3.0-dev and glib-networking requirements
+- **Video Codec Strategy**: Switched from H.264 to VP8 for better network condition support
+  - VP8 provides superior performance in poor network conditions
+  - Better error resilience and packet loss recovery
+  - Lower latency for real-time communication
+  - Native WebRTC support without additional licensing
 
 ### Removed
 - **librws Dependency**: Completely removed librws library and subdirectory
@@ -29,12 +36,17 @@ All notable changes to this project will be documented in this file.
 - **Codec Mismatch**: Resolved H.264 vs VP8 codec incompatibility
 - **Element Creation**: Added comprehensive null checks for GStreamer elements
 - **Stream Duration**: Fixed short-lived streams with proper VP8 handling
+- **Publish Mode**: Fixed "notSetRemoteDescription" error by implementing VP8 encoding
+- **Bidirectional Streaming**: Resolved codec mismatch between publish and play modes
 
 ### Testing
 - **Verified**: WSS connections to AntMedia Server (ams-21007.antmedia.cloud:5443)
 - **Verified**: VP8 video and OPUS audio streaming for 30+ seconds
 - **Verified**: WebRTC signaling with proper ICE candidate exchange
 - **Verified**: Echo server connectivity (ws:// and wss://)
+- **Verified**: VP8 video and OPUS audio publishing with successful SDP negotiation
+- **Verified**: Full bidirectional streaming (publish and play modes)
+- **Verified**: AntMedia Server integration with VP8 codec compatibility
 
 ### Migration Notes
 - **Breaking Change**: Requires libsoup-3.0-dev and glib-networking

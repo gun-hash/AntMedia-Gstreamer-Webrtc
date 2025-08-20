@@ -8,7 +8,9 @@
 #define TURN_SERVER ""
 #define AUDIO_ENCODE "  ! audioconvert ! audioresample   ! opusenc bitrate=192000  ! rtpopuspay "
 #define VIDEO_ENCODE " ! timeoverlay time-mode=2 halignment=right valignment=bottom   ! videoconvert ! video/x-raw,format=I420 ! x264enc  speed-preset=3 tune=zerolatency ! rtph264pay "
+#define VIDEO_ENCODE_VP8 " ! timeoverlay time-mode=2 halignment=right valignment=bottom   ! videoconvert ! video/x-raw,format=I420 ! vp8enc deadline=1 ! rtpvp8pay "
 #define RTP_CAPS_H264 " application/x-rtp,media=video,encoding-name=H264,payload=96,clock-rate=90000 "
+#define RTP_CAPS_VP8 " application/x-rtp,media=video,encoding-name=VP8,payload=96,clock-rate=90000 "
 #define RTP_CAPS_OPUS " application/x-rtp,media=audio,encoding-name=OPUS,payload=97 "
 
 #include <stdlib.h>
@@ -517,12 +519,12 @@ static void on_socket_connected(SoupWebsocketConnection *conn)
     gchar pipeline_str[1000];
     if(g_strcmp0(filename,"")==0){
     printf("test video sharing");
-    gst_pipe = gst_parse_launch(" tee name=video_tee ! queue ! fakesink  sync=true  tee name=audio_tee ! queue ! fakesink sync=true videotestsrc is-live=true " VIDEO_ENCODE " ! " RTP_CAPS_H264 " !  queue ! video_tee. audiotestsrc  is-live=true wave=red-noise " AUDIO_ENCODE " ! " RTP_CAPS_OPUS " !  queue ! audio_tee. ", NULL);
+    gst_pipe = gst_parse_launch(" tee name=video_tee ! queue ! fakesink  sync=true  tee name=audio_tee ! queue ! fakesink sync=true videotestsrc is-live=true " VIDEO_ENCODE_VP8 " ! " RTP_CAPS_VP8 " !  queue ! video_tee. audiotestsrc  is-live=true wave=red-noise " AUDIO_ENCODE " ! " RTP_CAPS_OPUS " !  queue ! audio_tee. ", NULL);
     }
     else{
     printf("file  sharing");
 
-    sprintf(pipeline_str," tee name=video_tee ! queue ! fakesink  sync=true  tee name=audio_tee ! queue ! fakesink sync=true filesrc location=%s  ! qtdemux name=demuxtee  demuxtee. ! decodebin " VIDEO_ENCODE " ! " RTP_CAPS_H264 " !  queue ! video_tee. demuxtee. ! decodebin " AUDIO_ENCODE " ! " RTP_CAPS_OPUS " !  queue ! audio_tee. ",filename);
+    sprintf(pipeline_str," tee name=video_tee ! queue ! fakesink  sync=true  tee name=audio_tee ! queue ! fakesink sync=true filesrc location=%s  ! qtdemux name=demuxtee  demuxtee. ! decodebin " VIDEO_ENCODE_VP8 " ! " RTP_CAPS_VP8 " !  queue ! video_tee. demuxtee. ! decodebin " AUDIO_ENCODE " ! " RTP_CAPS_OPUS " !  queue ! audio_tee. ",filename);
     gst_pipe = gst_parse_launch(pipeline_str, NULL);
     }
     gst_element_set_state(gst_pipe, GST_STATE_READY);

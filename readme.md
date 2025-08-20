@@ -157,13 +157,17 @@ timeout 30 ./sendRecvAnt --ip ams-21007.antmedia.cloud --port 5443 --wss --mode 
 
 ### Verified Working Features
 - ✅ **WSS connections** to AntMedia Server (ams-21007.antmedia.cloud:5443)
-- ✅ **VP8 video and OPUS audio** streaming
+- ✅ **VP8 video and OPUS audio** streaming (play mode)
+- ✅ **VP8 video and OPUS audio** publishing (publish mode)
 - ✅ **WebRTC signaling** with ICE candidates
 - ✅ **Long-duration streaming** (30+ seconds sustained)
 - ✅ **Multiple stream support**
 - ✅ **Echo server testing** (ws:// and wss://)
+- ✅ **Full bidirectional streaming** (publish and play)
 
 ### Expected Output
+
+#### Play Mode (Receiving Streams)
 ```
 start ams-21007.antmedia.cloud  5443 websocket connected
 received text message: {"streamId":"trial1","definition":"play_started","command":"notification"}
@@ -174,14 +178,33 @@ Successfully linked videoconvert stream
 received text message: {"videoBitrate":1500000,"streamId":"trial1","definition":"bitrateMeasurement","command":"notification","audioBitrate":96000}
 ```
 
+#### Publish Mode (Sending Streams)
+```
+start ams-21007.antmedia.cloud  5443 websocket connected
+test video sharing
+negotiation needed offer created:
+a=rtpmap:96 VP8/90000
+sending offer to trial1
+received text message: {"streamId":"trial1","type":"answer","command":"takeConfiguration","sdp":"..."}
+received text message: {"streamId":"trial1","definition":"publish_started","command":"notification"}
+```
+
 ### Technical Improvements
 
 #### Fixed Issues
 - ✅ **VP8 decoder pipeline**: Removed non-existent `vp8parse` element
 - ✅ **Codec mismatch resolved**: Changed from H.264 to VP8 for video streams
+- ✅ **VP8 encoding support**: Added VP8 encoding for publishing (vp8enc + rtpvp8pay)
 - ✅ **Error handling**: Added comprehensive null checks for GStreamer elements
 - ✅ **Connection reliability**: Improved with libsoup-3.0 migration
 - ✅ **Build warnings**: Fixed implicit declaration warnings
+
+#### Codec Strategy
+- **VP8 over H.264**: Chosen for better network condition support
+  - VP8 provides superior performance in poor network conditions
+  - Better error resilience and packet loss recovery
+  - Lower latency for real-time communication
+  - Native WebRTC support without additional licensing
 
 #### Performance Enhancements
 - ✅ **Native TLS integration**: Better SSL/WSS support

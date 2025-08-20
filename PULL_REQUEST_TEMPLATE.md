@@ -1,8 +1,8 @@
-# Pull Request: Migrate from librws to libsoup-3.0 for WSS Support
+# Pull Request: Migrate from librws to libsoup-3.0 and Implement VP8 Encoding
 
 ## Summary
 
-This PR migrates the WebSocket implementation from `librws` to `libsoup-3.0` to enable secure WebSocket connections (WSS) and improve overall connection reliability.
+This PR migrates the WebSocket implementation from `librws` to `libsoup-3.0` to enable secure WebSocket connections (WSS) and implements VP8 encoding for better network condition support and full bidirectional streaming capabilities.
 
 ## Changes Made
 
@@ -18,6 +18,9 @@ This PR migrates the WebSocket implementation from `librws` to `libsoup-3.0` to 
   - Added `--wss` CLI flag for manual WSS forcing
   - Updated default app name from "WebRTCAppEE" to "Trial"
   - Improved error handling and connection management
+  - **VP8 Encoding**: Added VP8 encoding support for publishing (vp8enc + rtpvp8pay)
+  - **Codec Strategy**: Switched from H.264 to VP8 for better network conditions
+  - **Bidirectional Streaming**: Full support for both publish and play modes
 
 ### 📚 Documentation
 - **README.md**: Complete rewrite with migration documentation
@@ -31,6 +34,19 @@ This PR migrates the WebSocket implementation from `librws` to `libsoup-3.0` to 
 - Automatic WSS detection on port 5443
 - Manual WSS forcing with `--wss` flag
 - Proper TLS integration with glib-networking
+
+### ✅ VP8 Encoding Support
+- VP8 video encoding for publishing streams
+- Better performance in poor network conditions
+- Superior error resilience and packet loss recovery
+- Lower latency for real-time communication
+- Native WebRTC support without licensing concerns
+
+### ✅ Bidirectional Streaming
+- Full support for both publish and play modes
+- Consistent VP8 codec across all modes
+- Resolved codec mismatch issues
+- Complete AntMedia Server integration
 
 ### ✅ Improved CLI
 - New `--wss` option for secure connections
@@ -49,7 +65,9 @@ This PR migrates the WebSocket implementation from `librws` to `libsoup-3.0` to 
 - **WSS Connections**: Tested with echo.websocket.org:443
 - **AntMedia Server**: Successfully tested with ams-21007.antmedia.cloud:5443
 - **Stream Playback**: Verified WebRTC signaling and media streaming
+- **Stream Publishing**: Verified VP8 encoding and successful SDP negotiation
 - **All Modes**: Publish, Play, and P2P modes working correctly
+- **Bidirectional Streaming**: Full publish and play functionality verified
 
 ### 🧪 Test Commands
 ```bash
@@ -59,8 +77,11 @@ This PR migrates the WebSocket implementation from `librws` to `libsoup-3.0` to 
 # WSS Test  
 ./sendRecvAnt --ip echo.websocket.org --port 443 --wss --mode publish -i test123
 
-# AntMedia Server Test
+# AntMedia Server Play Test
 ./sendRecvAnt --ip ams-21007.antmedia.cloud --port 5443 --wss --mode play -i trial1
+
+# AntMedia Server Publish Test (VP8)
+./sendRecvAnt --ip ams-21007.antmedia.cloud --port 5443 --wss --mode publish -i trial1
 ```
 
 ## Breaking Changes
@@ -114,5 +135,7 @@ cmake .. && make
 ✅ WSS connection established
 ✅ WebRTC signaling completed
 ✅ Media streams received and playing
+✅ VP8 encoding for publishing streams
 ✅ All modes (publish/play/p2p) working
+✅ Bidirectional streaming verified
 ``` 
